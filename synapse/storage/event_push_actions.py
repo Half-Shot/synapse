@@ -26,8 +26,9 @@ logger = logging.getLogger(__name__)
 class EventPushActionsStore(SQLBaseStore):
     def _set_push_actions_for_event_and_users_txn(self, txn, event, tuples):
         """
-        :param event: the event set actions for
-        :param tuples: list of tuples of (user_id, actions)
+        Args:
+            event: the event set actions for
+            tuples: list of tuples of (user_id, actions)
         """
         values = []
         for uid, actions in tuples:
@@ -98,6 +99,96 @@ class EventPushActionsStore(SQLBaseStore):
             _get_unread_event_push_actions_by_room
         )
         defer.returnValue(ret)
+
+    @defer.inlineCallbacks
+    def get_push_action_users_in_range(self, min_stream_ordering, max_stream_ordering):
+        def f(txn):
+            sql = (
+                "SELECT DISTINCT(user_id) FROM event_push_actions WHERE"
+                " stream_ordering >= ? AND stream_ordering <= ?"
+            )
+            txn.execute(sql, (min_stream_ordering, max_stream_ordering))
+            return [r[0] for r in txn.fetchall()]
+        ret = yield self.runInteraction("get_push_action_users_in_range", f)
+        defer.returnValue(ret)
+
+    @defer.inlineCallbacks
+    def get_unread_push_actions_for_user_in_range(self, user_id,
+                                                  min_stream_ordering,
+                                                  max_stream_ordering=None):
+        def get_after_receipt(txn):
+            sql = (
+                "SELECT ep.event_id, ep.stream_ordering, ep.actions "
+                "FROM event_push_actions AS ep, ("
+                "   SELECT room_id, user_id,"
+                "       max(topological_ordering) as topological_ordering,"
+                "       max(stream_ordering) as stream_ordering"
+                "       FROM events"
+                "   NATURAL JOIN receipts_linearized WHERE receipt_type = 'm.read'"
+                "   GROUP BY room_id, user_id"
+                ") AS rl "
+                "WHERE"
+                "   ep.room_id = rl.room_id"
+                "   AND ("
+                "       ep.topological_ordering > rl.topological_ordering"
+                "       OR ("
+                "           ep.topological_ordering = rl.topological_ordering"
+                "           AND ep.stream_ordering > rl.stream_ordering"
+                "       )"
+                "   )"
+                "   AND ep.stream_ordering > ?"
+                "   AND ep.user_id = ?"
+                "   AND ep.user_id = rl.user_id"
+            )
+            args = [min_stream_ordering, user_id]
+            if max_stream_ordering is not None:
+                sql += " AND ep.stream_ordering <= ?"
+                args.append(max_stream_ordering)
+            sql += " ORDER BY ep.stream_ordering ASC"
+            txn.execute(sql, args)
+            return txn.fetchall()
+        after_read_receipt = yield self.runInteraction(
+            "get_unread_push_actions_for_user_in_range", get_after_receipt
+        )
+
+        def get_no_receipt(txn):
+            sql = (
+                "SELECT ep.event_id, ep.stream_ordering, ep.actions "
+                "FROM event_push_actions AS ep "
+                "WHERE ep.room_id not in ("
+                "   SELECT room_id FROM events NATURAL JOIN receipts_linearized"
+                "   WHERE receipt_type = 'm.read' AND user_id = ? "
+                "   GROUP BY room_id"
+                ") AND ep.user_id = ? AND ep.stream_ordering > ?"
+            )
+            args = [user_id, user_id, min_stream_ordering]
+            if max_stream_ordering is not None:
+                sql += " AND ep.stream_ordering <= ?"
+                args.append(max_stream_ordering)
+            sql += " ORDER BY ep.stream_ordering ASC"
+            txn.execute(sql, args)
+            return txn.fetchall()
+        no_read_receipt = yield self.runInteraction(
+            "get_unread_push_actions_for_user_in_range", get_no_receipt
+        )
+
+        defer.returnValue([
+            {
+                "event_id": row[0],
+                "stream_ordering": row[1],
+                "actions": json.loads(row[2]),
+            } for row in after_read_receipt + no_read_receipt
+        ])
+
+    @defer.inlineCallbacks
+    def get_latest_push_action_stream_ordering(self):
+        def f(txn):
+            txn.execute("SELECT MAX(stream_ordering) FROM event_push_actions")
+            return txn.fetchone()
+        result = yield self.runInteraction(
+            "get_latest_push_action_stream_ordering", f
+        )
+        defer.returnValue(result[0] or 0)
 
     def _remove_push_actions_for_event_id_txn(self, txn, room_id, event_id):
         # Sad that we have to blow away the cache for the whole room here
