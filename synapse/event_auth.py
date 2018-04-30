@@ -27,12 +27,13 @@ from synapse.types import UserID, get_domain_from_id
 logger = logging.getLogger(__name__)
 
 
-def check(event, auth_events, do_sig_check=True, do_size_check=True):
+def check(event, auth_events, do_sig_check=True, do_size_check=True, prev_events=None):
     """ Checks if this event is correctly authed.
 
     Args:
         event: the event being checked.
         auth_events (dict: event-key -> event): the existing room state.
+        prev_events: (dict: event-key -> event): the events this event references.
 
 
     Returns:
@@ -73,6 +74,7 @@ def check(event, auth_events, do_sig_check=True, do_size_check=True):
         logger.warn("Trusting event: %s", event.event_id)
         return True
 
+
     if event.type == EventTypes.Create:
         # Depth used to be 0, but now SHOULD be 1.
         if event.depth != 1 and event.depth != 0:
@@ -89,13 +91,15 @@ def check(event, auth_events, do_sig_check=True, do_size_check=True):
         # FIXME
         return True
 
-    expected_depth = (max(event.prev_events, lambda x: x.depth) + 1)
-
-    if event.depth != expected_depth:
-        raise SynapseError(
-            403,
-            "Event depth %i MUST be %i" % (event.depth, expected_depth)
-        )
+    if prev_events not is None:
+        expected_depth = max(prev_events.values(),key=lambda event: event.depth) + 1
+        if event.depth != expected_depth:
+            raise SynapseError(
+                403,
+                "Event depth %i MUST be %i" % (event.depth, expected_depth)
+            )
+    else:
+        logger.warn("Event has no prev_events (that we can fetch), so going to accept it.")
 
     creation_event = auth_events.get((EventTypes.Create, ""), None)
 

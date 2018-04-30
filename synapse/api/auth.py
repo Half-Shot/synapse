@@ -65,24 +65,26 @@ class Auth(object):
             event, context.prev_state_ids, for_verification=True,
         )
         auth_events = yield self.store.get_events(auth_events_ids)
+        #  TODO: This can exploited to DoS by adding a huge amount of prev_keys.
+        prev_events = yield self.store.get_events(event.prev_events.keys())
         auth_events = {
             (e.type, e.state_key): e for e in auth_events.values()
         }
-        self.check(event, auth_events=auth_events, do_sig_check=do_sig_check)
+        self.check(event, auth_events=auth_events, do_sig_check=do_sig_check, prev_events=prev_events)
 
-    def check(self, event, auth_events, do_sig_check=True):
+    def check(self, event, auth_events, do_sig_check=True, prev_events=None):
         """ Checks if this event is correctly authed.
 
         Args:
             event: the event being checked.
             auth_events (dict: event-key -> event): the existing room state.
-
+            prev_events: (dict: event-key -> event): the events this event references.
 
         Returns:
             True if the auth checks pass.
         """
         with Measure(self.clock, "auth.check"):
-            event_auth.check(event, auth_events, do_sig_check=do_sig_check)
+            event_auth.check(event, auth_events, do_sig_check=do_sig_check, prev_events=prev_events)
 
     @defer.inlineCallbacks
     def check_joined_room(self, room_id, user_id, current_state=None):
