@@ -168,12 +168,20 @@ class ApplicationService(object):
             return regex_obj["exclusive"]
         return False
 
+    def _filter_self_events(self, sender):
+        for regex_obj in self.namespaces["users"]:
+            if regex_obj["regex"].match(sender):
+                if regex_obj.get("filter_self_events", False):
+                    return True
+        return False
+
     @defer.inlineCallbacks
     def _matches_user(self, event, store):
         if not event:
             defer.returnValue(False)
 
-        if self.is_interested_in_user(event.sender):
+        if (not self._should_filter_self_events(event.sender) and
+                self.is_interested_in_user(event.sender)):
             defer.returnValue(True)
         # also check m.room.member state key
         if (event.type == EventTypes.Member and
