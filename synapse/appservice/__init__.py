@@ -169,6 +169,8 @@ class ApplicationService(object):
         return False
 
     def _filter_self_events(self, sender):
+        if sender is None:
+            return False
         for regex_obj in self.namespaces["users"]:
             if regex_obj["regex"].match(sender):
                 if regex_obj.get("filter_self_events", False):
@@ -180,8 +182,7 @@ class ApplicationService(object):
         if not event:
             defer.returnValue(False)
 
-        if (not self._should_filter_self_events(event.sender) and
-                self.is_interested_in_user(event.sender)):
+        if (self.is_interested_in_user(event.sender)):
             defer.returnValue(True)
         # also check m.room.member state key
         if (event.type == EventTypes.Member and
@@ -232,6 +233,11 @@ class ApplicationService(object):
         Returns:
             bool: True if this service would like to know about this event.
         """
+
+        # Do not send if we are excluding virtual users
+        if self._filter_self_events(event.get("sender", None)):
+            defer.returnValue(False)
+
         # Do cheap checks first
         if self._matches_room_id(event):
             defer.returnValue(True)
