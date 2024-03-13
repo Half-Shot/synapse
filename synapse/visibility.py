@@ -124,9 +124,9 @@ async def filter_events_for_client(
 
     erased_senders = await storage.main.are_users_erased(e.sender for e in events)
 
+    retention_policies: Dict[str, RetentionPolicy] = {}
     if filter_send_to_client:
         room_ids = {e.room_id for e in events}
-        retention_policies: Dict[str, RetentionPolicy] = {}
 
         for room_id in room_ids:
             retention_policies[
@@ -141,7 +141,7 @@ async def filter_events_for_client(
             filter_send_to_client=filter_send_to_client,
             sender_ignored=event.sender in ignore_list,
             always_include_ids=always_include_ids,
-            retention_policy=retention_policies[room_id],
+            retention_policy=retention_policies.get(event.room_id),
             state=event_id_to_state.get(event.event_id),
             is_peeking=is_peeking,
             sender_erased=erased_senders.get(event.sender, False),
