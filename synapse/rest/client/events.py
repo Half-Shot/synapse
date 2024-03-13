@@ -109,50 +109,6 @@ class EventRestServlet(RestServlet):
         else:
             return 404, "Event not found."
 
-class EventVisibilityRestServlet(RestServlet):
-    PATTERNS = client_patterns("/events/(?P<event_id>[^/]*)/visibility$", unstable=True)
-    CATEGORY = "Client API requests"
-
-    def __init__(self, hs: "HomeServer"):
-        super().__init__()
-        self.clock = hs.get_clock()
-        self.event_handler = hs.get_event_handler()
-        self.auth = hs.get_auth()
-        self._event_serializer = hs.get_event_client_serializer()
-
-    async def on_GET(
-        self, request: SynapseRequest, event_id: str
-    ) -> Tuple[int, Union[str, JsonDict]]:
-
-        args: Dict[bytes, List[bytes]] = request.args  # type: ignore
-        user_ids = parse_strings_from_args(args, "user_id", required=True)
-
-        if len(user_ids) > 1:
-            raise SynapseError(
-                HTTPStatus.BAD_REQUEST,
-                "Duplicate user_id query parameter",
-                errcode=Codes.INVALID_PARAM,
-            )
-        target = user_ids[0]
-
-        requester = await self.auth.get_user_by_req(request)
-        requester_event = await self.event_handler.get_event(requester.user, None, event_id)
-
-        # The requester does not have access to the event
-        if not requester_event:
-            return 404, "Event not found."
-
-        if target:
-            # TODO: Parse user_id first
-            # TODO: This only checks local users, make sure we check remotes with get_users_in_room
-            target_event = await self.event_handler.get_event(target, None, event_id)
-            if not target_event:
-                return 404, "Target does not have access to the event."
-
-        return 200, "Event is visible"
-
-
 def register_servlets(hs: "HomeServer", http_server: HttpServer) -> None:
     EventStreamRestServlet(hs).register(http_server)
     EventRestServlet(hs).register(http_server)
-    EventVisibilityRestServlet(hs).register(http_server)

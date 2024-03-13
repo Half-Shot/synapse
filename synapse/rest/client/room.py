@@ -68,6 +68,7 @@ from synapse.types.state import StateFilter
 from synapse.util import json_decoder
 from synapse.util.cancellation import cancellable
 from synapse.util.stringutils import parse_and_validate_server_name, random_string
+from synapse.visibility import filter_events_for_client
 
 if TYPE_CHECKING:
     from synapse.server import HomeServer
@@ -875,6 +876,57 @@ class RoomEventServlet(RestServlet):
 
         raise SynapseError(404, "Event not found.", errcode=Codes.NOT_FOUND)
 
+class EventVisibilityRestServlet(RestServlet):
+    PATTERNS = client_patterns("/rooms/(?P<room_id>[^/]*)/event/(?P<event_id>[^/]*)/visibility$", unstable=True)
+    CATEGORY = "Client API requests"
+
+    def __init__(self, hs: "HomeServer"):
+        super().__init__()
+        self.clock = hs.get_clock()
+        self.event_handler = hs.get_event_handler()
+        self.auth = hs.get_auth()
+        self.storage = hs.get_storage_controllers()
+        self._event_serializer = hs.get_event_client_serializer()
+
+    async def on_GET(
+        self, request: SynapseRequest, room_id: str, event_id: str
+    ) -> Tuple[int, JsonDict]:
+        args: Dict[bytes, List[bytes]] = request.args  # type: ignore
+        requester = await self.auth.get_user_by_req(request)
+        user_ids = parse_strings_from_args(args, "target_user", required=False)
+        target = None
+        if user_ids:
+            if len(user_ids) > 1:
+                raise SynapseError(
+                    HTTPStatus.BAD_REQUEST,
+                    "Duplicate user_id query parameter",
+                    errcode=Codes.INVALID_PARAM,
+                )
+            target = UserID.from_string(user_ids[0]).to_string()
+
+        try:
+            event = await self.event_handler.get_event(
+                requester.user,
+                room_id,
+                event_id,
+            )
+        except AuthError:
+            raise SynapseError(404, "Event not found.", errcode=Codes.NOT_FOUND)
+
+        if target:
+            visible_events = await filter_events_for_client(
+                storage=self.storage,
+                user_id=target,
+                events=[event],
+                is_peeking=False,
+                filter_send_to_client=False,
+            )
+
+            if len(visible_events) == 0:
+                raise SynapseError(403, "Event not visible to target user.", errcode=Codes.FORBIDDEN)
+
+        return 200, {"visible": True}
+
 
 class RoomEventContextServlet(RestServlet):
     PATTERNS = client_patterns(
@@ -1512,6 +1564,7 @@ def register_servlets(hs: "HomeServer", http_server: HttpServer) -> None:
     SearchRestServlet(hs).register(http_server)
     RoomCreateRestServlet(hs).register(http_server)
     TimestampLookupRestServlet(hs).register(http_server)
+    EventVisibilityRestServlet(hs).register(http_server)
 
     # Some servlets only get registered for the main process.
     if hs.config.worker.worker_app is None:
