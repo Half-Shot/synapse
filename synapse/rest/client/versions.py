@@ -173,6 +173,8 @@ class VersionsRestServlet(RestServlet):
                     ),
                     # MSC4151: Report room API (Client-Server API)
                     "org.matrix.msc4151": self.config.experimental.msc4151_enabled,
+                    # MSC4133: Extending User Profile API with Key:Value Pairs
+                    "uk.tcpip.msc4133": self.config.experimental.msc4133_enabled,
                     # Simplified sliding sync
                     "org.matrix.simplified_msc3575": msc3575_enabled,
                 },
